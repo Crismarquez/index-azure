@@ -1,0 +1,40 @@
+# Core framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Azure Services
+azure-storage-blob==12.19.0
+azure-ai-documentintelligence==1.0.2
+azure-identity
+azure-keyvault-secrets==4.10.0
+
+# HTTP client for async requests
+aiohttp==3.9.1
+
+# PDF processing
+PyMuPDF==1.23.8
+
+# Data validation and settings management
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Environment variables
+python-dotenv==1.0.0
+
+# Development and testing dependencies (optional)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Rich
+rich
+
+# Logging and monitoring
+structlog==23.2.0
+
+# Additional utilities
+python-multipart==0.0.6  # For file uploads in FastAPI
+httpx==0.25.2  # For testing HTTP requests
+
+# File system operations
+pathlib  # Built-in Python, but ensuring compatibility 
