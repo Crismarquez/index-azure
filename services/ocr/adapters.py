@@ -123,7 +123,7 @@ class AzureDocumentIntelligenceAdapter(IOCRService):
                 poller = await asyncio.to_thread(
                     lambda: self.client.begin_analyze_document(
                         model,
-                        analyze_request={"urlSource": image_url},
+                        body={"urlSource": image_url},
                         output_content_format=output_format,
                         features=features,
                     )
@@ -203,7 +203,7 @@ class AzureDocumentIntelligenceAdapter(IOCRService):
                 poller = await asyncio.to_thread(
                     lambda: self.client.begin_analyze_document(
                         model,
-                        analyze_request={"urlSource": pdf_url},
+                        body={"urlSource": pdf_url},
                         output_content_format=output_format,
                         features=features,
                     )
