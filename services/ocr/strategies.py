@@ -65,6 +65,7 @@ class PDFProcessingStrategy(IDocumentProcessor):
             return ExtractionResult(
                 document_id=document.metadata.document_name,
                 content=extraction_result['content'],
+                pages=extraction_result.get('pages', []),
                 confidence_score=extraction_result.get('confidence'),
                 metadata={
                     "processing_method": "complete_pdf_with_selective_figures",
@@ -191,9 +192,17 @@ class ImageProcessingStrategy(IDocumentProcessor):
             # Extract text from single image
             extracted_texts = await self.text_extraction_service.extract_from_images([document.url])
             
+            # Create page information for the single image
+            page_content = extracted_texts[0] if extracted_texts else ""
+            pages = [{
+                "page_number": 1,
+                "content": page_content
+            }]
+            
             return ExtractionResult(
                 document_id=document.metadata.document_name,
-                content=extracted_texts[0] if extracted_texts else "",
+                content=page_content,
+                pages=pages,
                 page_count=1,
                 metadata={"image_url": document.url}
             )

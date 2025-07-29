@@ -314,6 +314,7 @@ class TextExtractionService:
             
             return {
                 'content': extracted_content,
+                'pages': pages,
                 'figures_count': len(figures_info),
                 'figures_analyzed': len(figure_descriptions),
                 'figures_skipped': len(figures_info) - len(figure_descriptions) if figures_info else 0,

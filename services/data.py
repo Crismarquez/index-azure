@@ -210,6 +210,7 @@ class BronzeStorageService:
             "base_folder": base_folder,
             "raw_folder": f"{base_folder}/raw",
             "extracted_content_folder": f"{base_folder}/extracted_content",
+            "content_pages_folder": f"{base_folder}/content_pages",
             "figures_folder": f"{base_folder}/figures",
             "processing_logs_folder": f"{base_folder}/processing_logs",
             "quality_assessment_folder": f"{base_folder}/quality_assessment",
@@ -268,11 +269,70 @@ class BronzeStorageService:
                 metadata_json, paths["metadata"]
             )
             
+            # Store individual page content if pages are available
+            if hasattr(extraction_result, 'pages') and extraction_result.pages:
+                pages_summary = await self.store_page_content(extraction_result.pages, paths)
+                stored_urls["page_content_summary"] = pages_summary
+            else:
+                logger.info("No pages data available to store individual page files")
+            
             logger.info(f"Stored extraction results in bronze structure")
             return stored_urls
             
         except Exception as e:
             logger.error(f"Error storing extraction results: {str(e)}")
+            raise
+    
+    async def store_page_content(self, pages: List[Dict[str, Any]], paths: Dict[str, str]) -> Dict[str, Any]:
+        """Store individual page content as separate JSON files in content_pages folder"""
+        stored_pages = []
+        
+        try:
+            if not pages:
+                logger.info("No pages to store")
+                return {"total_pages": 0, "stored_pages": []}
+            
+            # Store individual page files
+            for page_data in pages:
+                page_number = page_data.get("page_number", 0)
+                page_content = page_data.get("content", "")
+                
+                # Create page JSON data
+                page_json_data = {
+                    "page_number": page_number,
+                    "content": page_content,
+                    "content_length": len(page_content),
+                    "extracted_timestamp": datetime.now().isoformat()
+                }
+                
+                # Generate filename with page number
+                page_filename = f"page_{page_number}.json"
+                page_path = f"{paths['content_pages_folder']}/{page_filename}"
+                
+                # Store page JSON file
+                page_json = json.dumps(page_json_data, indent=2, ensure_ascii=False).encode('utf-8')
+                page_url = await self.storage_service.upload_file(page_json, page_path)
+                
+                stored_pages.append({
+                    "page_number": page_number,
+                    "filename": page_filename,
+                    "storage_path": page_path,
+                    "url": page_url,
+                    "content_length": len(page_content)
+                })
+            
+            # Create summary of stored pages
+            pages_summary = {
+                "total_pages": len(stored_pages),
+                "stored_pages": stored_pages,
+                "processing_timestamp": datetime.now().isoformat()
+            }
+            
+            logger.info(f"Stored {len(stored_pages)} individual page files in content_pages folder")
+            return pages_summary
+            
+        except Exception as e:
+            logger.error(f"Error storing page content: {str(e)}")
             raise
     
     async def store_figures(self, figures_data: List[Dict[str, Any]], figure_contents: List[bytes], paths: Dict[str, str]) -> Dict[str, Any]:
@@ -388,6 +448,7 @@ class BronzeStorageService:
                 "folder_structure": {
                     "raw": "Original document files",
                     "extracted_content": "OCR text extraction results and metadata",
+                    "content_pages": "Individual page content as separate JSON files",
                     "figures": "Extracted figures and AI vision analysis",
                     "processing_logs": "Processing statistics and logs",
                     "quality_assessment": "Quality validation results"

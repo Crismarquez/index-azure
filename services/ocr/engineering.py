@@ -173,6 +173,7 @@ class OCRPipeline:
                             "base_folder": bronze_base_folder,
                             "raw_folder": f"{bronze_base_folder}/raw",
                             "extracted_content_folder": f"{bronze_base_folder}/extracted_content",
+                            "content_pages_folder": f"{bronze_base_folder}/content_pages",
                             "figures_folder": f"{bronze_base_folder}/figures",
                             "processing_logs_folder": f"{bronze_base_folder}/processing_logs",
                             "quality_assessment_folder": f"{bronze_base_folder}/quality_assessment",

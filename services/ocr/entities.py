@@ -59,6 +59,7 @@ class ExtractionResult:
     """Result of OCR processing"""
     document_id: str
     content: str
+    pages: List[Dict[str, Any]] = None
     confidence_score: Optional[float] = None
     page_count: Optional[int] = None
     processing_time: Optional[float] = None

@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urljoin
 from urllib.request import pathname2url
 import base64
+import re
 
 
 from openai import AsyncAzureOpenAI
@@ -130,12 +131,34 @@ class AzureDocumentIntelligenceAdapter(IOCRService):
             
             # Get result
             result = await asyncio.to_thread(lambda: poller.result())
+
+                        # Get full markdown content
+            full_md = result.content
+
+            # Get page markdown content
+            page_mds = []
+            for page in result.pages:
+                span = page.spans[0]
+                start, length = span['offset'], span['length']
+                content = full_md[start : start + length]
+                # use regex to delete if <figure> is in content, just delete inside <figure> and </figure>
+                pattern = re.compile(r'(<figure>).*?(</figure>)', re.DOTALL)
+                content = pattern.sub(r'\1\2', content)
+
+                page_mds.append({
+                    "page_number": page.page_number,
+                    "content": content,
+                    "unit": page.unit,
+                    "width": page.width,
+                    "height": page.height
+                })
             
             # Extract metadata
             has_figures = hasattr(result, 'figures') and result.figures
             has_tables = hasattr(result, 'tables') and result.tables
             
             return {
+                "pages": page_mds,
                 'content': result.content if hasattr(result, 'content') else '',
                 'figures': has_figures,
                 'tables': has_tables,
@@ -188,6 +211,27 @@ class AzureDocumentIntelligenceAdapter(IOCRService):
             
             # Get result
             result = await asyncio.to_thread(lambda: poller.result())
+
+            # Get full markdown content
+            full_md = result.content
+
+            # Get page markdown content
+            page_mds = []
+            for page in result.pages:
+                span = page.spans[0]
+                start, length = span['offset'], span['length']
+                content = full_md[start : start + length]
+                # use regex to delete if <figure> is in content, just delete inside <figure> and </figure>
+                pattern = re.compile(r'(<figure>).*?(</figure>)', re.DOTALL)
+                content = pattern.sub(r'\1\2', content)
+
+                page_mds.append({
+                    "page_number": page.page_number,
+                    "content": content,
+                    "unit": page.unit,
+                    "width": page.width,
+                    "height": page.height
+                })
             
             # Process figures information
             figures_info = []
@@ -226,7 +270,7 @@ class AzureDocumentIntelligenceAdapter(IOCRService):
                     tables_info.append(table_info)
             
             return {
-                "pages": result.pages,
+                "pages": page_mds,
                 'content': result.content if hasattr(result, 'content') else '',
                 'figures': figures_info,
                 'tables': tables_info,
