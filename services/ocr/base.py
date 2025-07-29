@@ -178,10 +178,22 @@ class TextExtractionService:
                                     figure_content = f.read()
                                     figure_contents.append(figure_content)
                                 
-                                # Upload figure to storage (legacy path for immediate access)
-                                storage_path = f"extracted_figures/{os.path.basename(pdf_path)}/figure_{i+1}.png"
-                                figure_url = await self.storage_service.upload_file(figure_content, storage_path)
-                                figure_urls.append(figure_url)
+                                # Store figures in bronze structure early to get proper URLs
+                                figure_url = None
+                                if document and bronze_paths:
+                                    try:
+                                        # Store individual figure in bronze structure
+                                        figure_filename = f"figure_{i+1}.png"
+                                        figure_path_bronze = f"{bronze_paths['figures_folder']}/{figure_filename}"
+                                        figure_url = await self.storage_service.upload_file(figure_content, figure_path_bronze)
+                                        
+                                        logger.info(f"Stored figure {i+1} in bronze structure: {figure_path_bronze}")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to store figure {i+1} in bronze structure: {str(e)}")
+                                
+                                # Add figure URL to list (use bronze storage URL if available)
+                                if figure_url:
+                                    figure_urls.append(figure_url)
                                 
                                 # Get AI description of the figure
                                 if self.vision_service.storage_type == 'local':
@@ -190,8 +202,10 @@ class TextExtractionService:
                                         self._get_figure_analysis_prompt()
                                     )
                                 else:   
+                                    # Use bronze storage URL if available, otherwise use local path
+                                    vision_input = figure_url if figure_url else figure_path
                                     figure_description = await self.vision_service.describe_image(
-                                        figure_url, 
+                                        vision_input, 
                                         self._get_figure_analysis_prompt()
                                     )
                                 figure_descriptions.append(figure_description)
@@ -247,9 +261,44 @@ class TextExtractionService:
                     
                     # Store figures in bronze structure
                     if figure_contents and figures_to_analyze:
-                        bronze_urls["figures"] = await self.bronze_storage.store_figures(
-                            figures_to_analyze, figure_contents, bronze_paths
+                        # Create and store only the figure analysis summary JSON
+                        # (individual figures are already stored during processing)
+                        stored_figures = []
+                        for i, figure_data in enumerate(figures_to_analyze):
+                            figure_filename = f"figure_{i+1}.png"
+                            figure_path_bronze = f"{bronze_paths['figures_folder']}/{figure_filename}"
+                            
+                            # Calculate the URL based on storage service base URL
+                            if hasattr(self.storage_service, 'base_url'):
+                                relative_path = figure_path_bronze.replace('\\', '/')
+                                figure_url = f"{self.storage_service.base_url}/{relative_path}"
+                            else:
+                                figure_url = figure_path_bronze
+                                
+                            stored_figures.append({
+                                "figure_id": f"figure_{i+1}",
+                                "filename": figure_filename,
+                                "storage_path": figure_path_bronze,
+                                "url": figure_url,
+                                "analysis": figure_data.get("analysis", ""),
+                                "caption": figure_data.get("caption", ""),
+                                "bounding_regions": figure_data.get("bounding_regions", [])
+                            })
+                        
+                        # Store figure analysis summary
+                        from datetime import datetime
+                        import json
+                        figure_analysis = {
+                            "total_figures": len(stored_figures),
+                            "figures": stored_figures,
+                            "processing_timestamp": datetime.now().isoformat()
+                        }
+                        
+                        analysis_json = json.dumps(figure_analysis, indent=2).encode('utf-8')
+                        bronze_urls["figure_analysis"] = await self.storage_service.upload_file(
+                            analysis_json, bronze_paths["figure_analysis"]
                         )
+                        bronze_urls["figures"] = figure_analysis
                     
                     # Store processing logs
                     bronze_urls["processing_logs"] = await self.bronze_storage.store_processing_logs(

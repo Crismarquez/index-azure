@@ -162,12 +162,30 @@ class OCRPipeline:
                 # TODO: add quality assessment
                 
                 # Store quality assessment in bronze structure if available
-                bronze_paths = extraction_result.metadata.get('bronze_base_folder')
-                if bronze_paths:
+                bronze_base_folder = extraction_result.metadata.get('bronze_base_folder')
+                if bronze_base_folder:
                     from services.data import BronzeStorageService
                     bronze_storage = BronzeStorageService(self.storage_service)
                     try:
-                        bronze_paths_dict = bronze_storage.get_bronze_paths(document)
+                        # Use existing bronze paths from the base folder instead of generating new ones
+                        # This ensures we use the same folder structure created during processing
+                        bronze_paths_dict = {
+                            "base_folder": bronze_base_folder,
+                            "raw_folder": f"{bronze_base_folder}/raw",
+                            "extracted_content_folder": f"{bronze_base_folder}/extracted_content",
+                            "figures_folder": f"{bronze_base_folder}/figures",
+                            "processing_logs_folder": f"{bronze_base_folder}/processing_logs",
+                            "quality_assessment_folder": f"{bronze_base_folder}/quality_assessment",
+                            
+                            # Specific file paths
+                            "original_document": f"{bronze_base_folder}/raw/original_document.pdf",
+                            "full_text": f"{bronze_base_folder}/extracted_content/full_text.md",
+                            "metadata": f"{bronze_base_folder}/extracted_content/metadata.json",
+                            "extraction_result": f"{bronze_base_folder}/extracted_content/extraction_result.json",
+                            "figure_analysis": f"{bronze_base_folder}/figures/figure_analysis.json",
+                            "processing_log": f"{bronze_base_folder}/processing_logs/processing_log.json",
+                            "quality_report": f"{bronze_base_folder}/quality_assessment/quality_report.json"
+                        }
 
                         # Store extraction result in bronze structure 
                         bronze_extraction_urls = await bronze_storage.store_extraction_result(extraction_result, bronze_paths_dict)
