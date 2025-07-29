@@ -66,6 +66,48 @@ class AzureBlobStorageAdapter(IStorageService):
         except Exception as e:
             logger.error(f"Error deleting file {path}: {str(e)}")
             return False
+    
+    def list_files(self, prefix: str = "") -> List[str]:
+        """List all files with optional prefix filter"""
+        try:
+            # List blobs with the given prefix
+            blobs = self.container_client.list_blobs(name_starts_with=prefix)
+            file_paths = []
+            
+            for blob in blobs:
+                file_paths.append(blob.name)
+            
+            return sorted(file_paths)
+            
+        except Exception as e:
+            logger.error(f"Error listing files with prefix {prefix}: {str(e)}")
+            return []
+    
+    async def download_file_by_path(self, path: str) -> bytes:
+        """Download file content by blob path"""
+        try:
+            blob_client = self.container_client.get_blob_client(path)
+            blob_data = await asyncio.to_thread(blob_client.download_blob)
+            return await asyncio.to_thread(blob_data.readall)
+            
+        except Exception as e:
+            logger.error(f"Error downloading file by path {path}: {str(e)}")
+            raise
+    
+    async def read_json_file(self, path: str) -> dict:
+        """Read and parse JSON file from Azure Blob Storage"""
+        try:
+            content = await self.download_file_by_path(path)
+            return json.loads(content.decode('utf-8'))
+            
+        except Exception as e:
+            logger.error(f"Error reading JSON file {path}: {str(e)}")
+            raise
+    
+    def get_blob_url(self, path: str) -> str:
+        """Get the URL for a specific blob"""
+        blob_client = self.container_client.get_blob_client(path)
+        return blob_client.url
 
 class LocalFileStorageAdapter(IStorageService):
     """Adapter for local file system storage"""

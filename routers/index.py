@@ -3,6 +3,8 @@ from datetime import datetime
 import uuid
 import json
 import os
+import re
+from pathlib import Path
 
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -180,51 +182,416 @@ async def get_metrics():
         "service_health": pipeline.health_check.get_overall_health()
     }
 
-# Add local storage browsing endpoint if using local storage
+# Local storage specific endpoints (if needed in the future)
 if storage_config['type'] == 'local':
-    @router.get("/browse")
-    async def browse_files(prefix: str = ""):
-        """Browse local storage files"""
-        try:
-            if hasattr(pipeline.storage_service, 'list_files'):
-                files = pipeline.storage_service.list_files(prefix)
-                return {
-                    "storage_type": "local",
-                    "base_path": storage_config['base_path'],
-                    "prefix": prefix,
-                    "files": files,
-                    "total_files": len(files)
-                }
+    pass  # Reserved for local-only endpoints
+# Universal bronze endpoints (work with both local and Azure storage)
+@router.get("/browse")
+async def browse_files(prefix: str = ""):
+    """Browse storage files - works with both local and Azure storage"""
+    try:
+        if hasattr(pipeline.storage_service, 'list_files'):
+            files = pipeline.storage_service.list_files(prefix)
+            
+            # Determine storage type and get additional info
+            is_azure_storage = hasattr(pipeline.storage_service, 'container_name')
+            storage_type = "azure" if is_azure_storage else "local"
+            
+            response = {
+                "storage_type": storage_type,
+                "prefix": prefix,
+                "files": files,
+                "total_files": len(files)
+            }
+            
+            # Add type-specific information
+            if not is_azure_storage:
+                response["base_path"] = storage_config['base_path']
             else:
-                return {"error": "File browsing not supported for this storage type"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error browsing files: {str(e)}")
-    
-    @router.get("/bronze")
-    async def browse_bronze_folders():
-        """Browse bronze storage structure"""
-        try:
-            if hasattr(pipeline.storage_service, 'list_files'):
-                bronze_files = pipeline.storage_service.list_files("bronze")
+                response["container_name"] = pipeline.storage_service.container_name
+            
+            return response
+        else:
+            return {"error": "File browsing not supported for this storage type"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error browsing files: {str(e)}")
+
+@router.get("/bronze")
+async def browse_bronze_folders():
+    """Browse bronze storage structure - works with both local and Azure storage"""
+    try:
+        if hasattr(pipeline.storage_service, 'list_files'):
+            bronze_files = pipeline.storage_service.list_files("bronze")
+            
+            # Group files by bronze folder
+            bronze_folders = {}
+            for file_path in bronze_files:
+                if file_path.startswith("bronze/"):
+                    parts = file_path.split("/")
+                    if len(parts) >= 2:
+                        folder_name = parts[1]
+                        if folder_name not in bronze_folders:
+                            bronze_folders[folder_name] = []
+                        bronze_folders[folder_name].append(file_path)
+            
+            # Determine storage type
+            storage_type = "azure" if hasattr(pipeline.storage_service, 'container_name') else "local"
+            
+            return {
+                "storage_type": storage_type,
+                "bronze_folders": bronze_folders,
+                "total_folders": len(bronze_folders),
+                "total_files": len(bronze_files)
+            }
+        else:
+            return {"error": "Bronze browsing not supported for this storage type"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error browsing bronze: {str(e)}")
+
+@router.get("/bronze/documents")
+async def list_bronze_documents():
+    """List all documents in bronze state with organized data structure"""
+    try:
+        if not hasattr(pipeline.storage_service, 'list_files'):
+            return {"error": "Bronze document listing not supported for this storage type"}
+        
+        # Get all bronze folders
+        bronze_files = pipeline.storage_service.list_files("bronze")
+        bronze_folders = set()
+        
+        # Extract unique folder names from file paths
+        for file_path in bronze_files:
+            if file_path.startswith("bronze/"):
+                parts = file_path.split("/")
+                if len(parts) >= 2:
+                    bronze_folders.add(parts[1])
+        
+        documents = []
+        
+        for folder_name in bronze_folders:
+            try:
+                # Parse folder name structure: id_name_date_string
+                parsed_info = parse_bronze_folder_name(folder_name)
                 
-                # Group files by bronze folder
-                bronze_folders = {}
-                for file_path in bronze_files:
-                    if file_path.startswith("bronze/"):
-                        parts = file_path.split("/")
-                        if len(parts) >= 2:
-                            folder_name = parts[1]
-                            if folder_name not in bronze_folders:
-                                bronze_folders[folder_name] = []
-                            bronze_folders[folder_name].append(file_path)
+                # Try to read manifest.json for additional metadata
+                manifest_data = None
+                try:
+                    # Check if we're using local storage or Azure storage
+                    if hasattr(pipeline.storage_service, 'get_local_path'):
+                        # Local storage
+                        manifest_path = pipeline.storage_service.get_local_path(f"bronze/{folder_name}/manifest.json")
+                        if manifest_path.exists():
+                            with open(manifest_path, 'r', encoding='utf-8') as f:
+                                manifest_data = json.load(f)
+                    elif hasattr(pipeline.storage_service, 'read_json_file'):
+                        # Azure storage
+                        try:
+                            manifest_data = await pipeline.storage_service.read_json_file(f"bronze/{folder_name}/manifest.json")
+                        except Exception:
+                            # Manifest file doesn't exist or can't be read
+                            pass
+                except Exception as e:
+                    logger.warning(f"Could not read manifest for {folder_name}: {str(e)}")
                 
-                return {
-                    "storage_type": "local",
-                    "bronze_folders": bronze_folders,
-                    "total_folders": len(bronze_folders),
-                    "total_files": len(bronze_files)
+                # Build document info
+                document_info = {
+                    "folder_name": folder_name,
+                    "parsed_structure": parsed_info,
+                    "bronze_path": f"bronze/{folder_name}",
+                    "status": "bronze"
                 }
-            else:
-                return {"error": "Bronze browsing not supported for this storage type"}
+                
+                # Add manifest data if available
+                if manifest_data:
+                    document_info["document_info"] = manifest_data.get("document_info", {})
+                    document_info["bronze_structure"] = manifest_data.get("bronze_structure", {})
+                    document_info["stored_artifacts"] = manifest_data.get("stored_artifacts", {})
+                    
+                    # Extract key information for easier access
+                    doc_info = manifest_data.get("document_info", {})
+                    document_info["summary"] = {
+                        "document_name": doc_info.get("document_name", parsed_info.get("name", "unknown")),
+                        "document_type": doc_info.get("document_type", "unknown"),
+                        "user_email": doc_info.get("user_email", "unknown"),
+                        "context_name": doc_info.get("context_name", ""),
+                        "created_at": doc_info.get("created_at", ""),
+                        "request_id": doc_info.get("request_id", parsed_info.get("id", "unknown"))
+                    }
+                    
+                    # Count artifacts
+                    artifacts = manifest_data.get("stored_artifacts", {})
+                    figures = artifacts.get("figures", {})
+                    document_info["artifacts_count"] = {
+                        "total_figures": figures.get("total_figures", 0),
+                        "has_original_document": bool(artifacts.get("original_document")),
+                        "has_figure_analysis": bool(artifacts.get("figure_analysis"))
+                    }
+                else:
+                    # Fallback to parsed info only
+                    document_info["summary"] = {
+                        "document_name": parsed_info.get("name", "unknown"),
+                        "document_type": "unknown",
+                        "user_email": "unknown",
+                        "context_name": "",
+                        "created_at": parsed_info.get("timestamp", ""),
+                        "request_id": parsed_info.get("id", "unknown")
+                    }
+                    document_info["artifacts_count"] = {
+                        "total_figures": 0,
+                        "has_original_document": False,
+                        "has_figure_analysis": False
+                    }
+                
+                documents.append(document_info)
+                
+            except Exception as e:
+                logger.warning(f"Error processing bronze folder {folder_name}: {str(e)}")
+                # Add basic info even if parsing fails
+                documents.append({
+                    "folder_name": folder_name,
+                    "bronze_path": f"bronze/{folder_name}",
+                    "status": "bronze",
+                    "error": f"Processing failed: {str(e)}",
+                    "summary": {
+                        "document_name": folder_name,
+                        "document_type": "unknown",
+                        "user_email": "unknown",
+                        "context_name": "",
+                        "created_at": "",
+                        "request_id": "unknown"
+                    }
+                })
+        
+        # Sort documents by creation date (newest first)
+        documents.sort(key=lambda x: x.get("summary", {}).get("created_at", ""), reverse=True)
+        
+        # Determine storage type for response
+        storage_type = "azure" if hasattr(pipeline.storage_service, 'container_name') else "local"
+        
+        return {
+            "status": "success",
+            "storage_type": storage_type,
+            "total_documents": len(documents),
+            "documents": documents,
+            "metadata": {
+                "bronze_base_path": "bronze/",
+                "structure_format": "id_name_date_string",
+                "last_updated": datetime.utcnow().isoformat()
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing bronze documents: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error listing bronze documents: {str(e)}")
+
+@router.get("/bronze/documents/{folder_name}")
+async def get_bronze_document_details(folder_name: str):
+    """Get detailed information about a specific bronze document"""
+    try:
+        if not hasattr(pipeline.storage_service, 'list_files'):
+            return {"error": "Bronze document details not supported for this storage type"}
+        
+        # Check if folder exists
+        bronze_files = pipeline.storage_service.list_files(f"bronze/{folder_name}")
+        if not bronze_files:
+            raise HTTPException(status_code=404, detail=f"Bronze document folder '{folder_name}' not found")
+        
+        # Parse folder name
+        parsed_info = parse_bronze_folder_name(folder_name)
+        
+        # Read manifest.json
+        manifest_data = None
+        try:
+            # Check if we're using local storage or Azure storage
+            if hasattr(pipeline.storage_service, 'get_local_path'):
+                # Local storage
+                manifest_path = pipeline.storage_service.get_local_path(f"bronze/{folder_name}/manifest.json")
+                if manifest_path.exists():
+                    with open(manifest_path, 'r', encoding='utf-8') as f:
+                        manifest_data = json.load(f)
+            elif hasattr(pipeline.storage_service, 'read_json_file'):
+                # Azure storage
+                try:
+                    manifest_data = await pipeline.storage_service.read_json_file(f"bronze/{folder_name}/manifest.json")
+                except Exception:
+                    # Manifest file doesn't exist or can't be read
+                    pass
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error browsing bronze: {str(e)}")
+            logger.warning(f"Could not read manifest for {folder_name}: {str(e)}")
+        
+        # Get all files in the bronze folder
+        folder_files = [f for f in bronze_files if f.startswith(f"bronze/{folder_name}/")]
+        
+        # Organize files by type
+        files_by_type = {
+            "manifest": [],
+            "raw": [],
+            "figures": [],
+            "content_pages": [],
+            "extracted_content": [],
+            "processing_logs": [],
+            "other": []
+        }
+        
+        # Determine storage type and base URL
+        is_azure_storage = hasattr(pipeline.storage_service, 'container_name')
+        storage_type = "azure" if is_azure_storage else "local"
+        
+        for file_path in folder_files:
+            file_name = os.path.basename(file_path)
+            
+            # Generate appropriate URL based on storage type
+            if is_azure_storage:
+                file_url = pipeline.storage_service.get_blob_url(file_path)
+            else:
+                file_url = f"http://localhost:8000/files/{file_path}"
+            
+            file_info = {
+                "filename": file_name,
+                "path": file_path,
+                "url": file_url
+            }
+            
+            if file_name == "manifest.json":
+                files_by_type["manifest"].append(file_info)
+            elif "raw/" in file_path:
+                files_by_type["raw"].append(file_info)
+            elif "figures/" in file_path:
+                files_by_type["figures"].append(file_info)
+            elif "content_pages/" in file_path:
+                files_by_type["content_pages"].append(file_info)
+            elif "extracted_content/" in file_path:
+                files_by_type["extracted_content"].append(file_info)
+            elif "processing_logs/" in file_path:
+                files_by_type["processing_logs"].append(file_info)
+            else:
+                files_by_type["other"].append(file_info)
+        
+        # Build response
+        response = {
+            "folder_name": folder_name,
+            "parsed_structure": parsed_info,
+            "bronze_path": f"bronze/{folder_name}",
+            "status": "bronze",
+            "storage_type": storage_type,
+            "total_files": len(folder_files),
+            "files_by_type": files_by_type,
+            "files_count": {
+                "manifest": len(files_by_type["manifest"]),
+                "raw": len(files_by_type["raw"]),
+                "figures": len(files_by_type["figures"]),
+                "content_pages": len(files_by_type["content_pages"]),
+                "extracted_content": len(files_by_type["extracted_content"]),
+                "processing_logs": len(files_by_type["processing_logs"]),
+                "other": len(files_by_type["other"])
+            }
+        }
+        
+        # Add manifest data if available
+        if manifest_data:
+            response["manifest_data"] = manifest_data
+            
+            # Add convenient summary
+            doc_info = manifest_data.get("document_info", {})
+            response["summary"] = {
+                "document_name": doc_info.get("document_name", parsed_info.get("name", "unknown")),
+                "document_type": doc_info.get("document_type", "unknown"),
+                "user_email": doc_info.get("user_email", "unknown"),
+                "context_name": doc_info.get("context_name", ""),
+                "created_at": doc_info.get("created_at", ""),
+                "request_id": doc_info.get("request_id", parsed_info.get("id", "unknown")),
+                "original_url": doc_info.get("original_url", "")
+            }
+            
+            # Add detailed artifacts information
+            artifacts = manifest_data.get("stored_artifacts", {})
+            figures = artifacts.get("figures", {})
+            response["artifacts_details"] = {
+                "original_document": artifacts.get("original_document"),
+                "figure_analysis": artifacts.get("figure_analysis"),
+                "figures": {
+                    "total_figures": figures.get("total_figures", 0),
+                    "figures_list": figures.get("figures", [])
+                }
+            }
+        else:
+            response["summary"] = {
+                "document_name": parsed_info.get("name", "unknown"),
+                "document_type": "unknown",
+                "user_email": "unknown",
+                "context_name": "",
+                "created_at": parsed_info.get("timestamp", ""),
+                "request_id": parsed_info.get("id", "unknown"),
+                "original_url": ""
+            }
+            response["manifest_data"] = None
+            response["artifacts_details"] = None
+        
+        response["metadata"] = {
+            "structure_format": "id_name_date_string",
+            "retrieved_at": datetime.utcnow().isoformat()
+        }
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting bronze document details for {folder_name}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting document details: {str(e)}")
+
+
+def parse_bronze_folder_name(folder_name: str) -> dict:
+    """Parse bronze folder name with format: id_name_date_string"""
+    try:
+        # Split by underscore and try to identify parts
+        parts = folder_name.split("_")
+        
+        if len(parts) < 3:
+            # Not enough parts, return basic structure
+            return {
+                "id": parts[0] if parts else "unknown",
+                "name": "_".join(parts[1:]) if len(parts) > 1 else "unknown",
+                "timestamp": "",
+                "date": "",
+                "raw_name": folder_name
+            }
+        
+        # Try to find timestamp pattern (YYYYMMDD_HHMMSS)
+        timestamp_pattern = r"(\d{8}_\d{6})$"
+        match = re.search(timestamp_pattern, folder_name)
+        
+        if match:
+            timestamp = match.group(1)
+            # Everything before the timestamp
+            name_part = folder_name[:match.start()].rstrip("_")
+            parts = name_part.split("_")
+            
+            return {
+                "id": parts[0] if parts else "unknown",
+                "name": "_".join(parts[1:]) if len(parts) > 1 else "unknown",
+                "timestamp": timestamp,
+                "date": timestamp.split("_")[0] if "_" in timestamp else timestamp[:8],
+                "time": timestamp.split("_")[1] if "_" in timestamp else timestamp[9:],
+                "raw_name": folder_name
+            }
+        else:
+            # No clear timestamp pattern, use last two parts as date info
+            return {
+                "id": parts[0],
+                "name": "_".join(parts[1:-2]) if len(parts) > 2 else "_".join(parts[1:]),
+                "timestamp": "_".join(parts[-2:]) if len(parts) >= 2 else "",
+                "date": parts[-2] if len(parts) >= 2 else "",
+                "raw_name": folder_name
+            }
+            
+    except Exception as e:
+        logger.warning(f"Error parsing folder name {folder_name}: {str(e)}")
+        return {
+            "id": "unknown",
+            "name": folder_name,
+            "timestamp": "",
+            "date": "",
+            "raw_name": folder_name,
+            "parse_error": str(e)
+        }

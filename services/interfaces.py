@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
 from services.ocr.entities import Document, ExtractionResult, ProcessingContext
 
 class IDocumentProcessor(ABC):
@@ -62,6 +63,11 @@ class IStorageService(ABC):
     @abstractmethod
     async def delete_file(self, path: str) -> bool:
         """Delete file"""
+        pass
+    
+    @abstractmethod
+    def list_files(self, prefix: str = "") -> List[str]:
+        """List all files with optional prefix filter"""
         pass
 
 class IConversionService(ABC):
