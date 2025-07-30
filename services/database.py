@@ -87,22 +87,55 @@ class DocumentRecord(Base):
     processing_completed_at = Column(DateTime, nullable=True)
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convertir el registro a diccionario"""
+        """Convertir el registro a diccionario incluyendo toda la metadata"""
         return {
+            # Identificadores únicos
             'id': self.id,
             'document_id': self.document_id,
+            
+            # Información básica del documento
             'document_name': self.document_name,
             'document_type': self.document_type,
+            'original_url': self.original_url,
+            
+            # Metadatos de contexto - CRÍTICOS para funcionamiento
+            'request_id': self.request_id,
+            'user_email': self.user_email,
+            'context_id': self.context_id,
+            'context_name': self.context_name,
+            'attachment_id': self.attachment_id,
+            
+            # Estados y procesamiento
             'processing_status': self.processing_status,
             'data_state': self.data_state,
             'process_stage': self.process_stage,
-            'user_email': self.user_email,
-            'context_name': self.context_name,
+            
+            # Información de procesamiento
             'confidence_score': self.confidence_score,
             'page_count': self.page_count,
             'processing_time': self.processing_time,
+            'content_length': self.content_length,
+            
+            # Rutas de almacenamiento
+            'bronze_folder_path': self.bronze_folder_path,
+            'original_document_url': self.original_document_url,
+            'extracted_content_url': self.extracted_content_url,
+            'figures_folder_url': self.figures_folder_url,
+            
+            # Metadatos adicionales y configuración - CRÍTICO
+            'extra_metadata': self.extra_metadata,
+            'processing_config': self.processing_config,
+            'ai_vision_enabled': self.ai_vision_enabled,
+            
+            # Calidad y errores
+            'quality_score': self.quality_score,
+            'has_errors': self.has_errors,
+            'error_details': self.error_details,
+            
+            # Timestamps
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'processing_started_at': self.processing_started_at.isoformat() if self.processing_started_at else None,
             'processing_completed_at': self.processing_completed_at.isoformat() if self.processing_completed_at else None
         }
 

@@ -4,12 +4,14 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers.index import router as indexrouter
+from routers.management import router as managementrouter
 
 app = FastAPI()
 app.title = "Index service"
 app.version = "0.0.1"
 
 app.include_router(indexrouter)
+app.include_router(managementrouter)
 
 app.add_middleware(
     CORSMiddleware,
