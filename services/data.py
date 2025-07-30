@@ -230,11 +230,17 @@ class BronzeStorageService:
     
     def _get_document_folder_name(self, document: Document) -> str:
         """Generate unique folder name for document processing session"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Use document_id for consistency across multiple calls, fallback to timestamp if not available
+        if document.document_id:
+            unique_id = document.document_id
+        else:
+            # Fallback to timestamp only if document_id is not set (shouldn't happen in normal flow)
+            unique_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         request_id = document.metadata.request_id or "no_request"
         document_name = self._sanitize_filename(document.metadata.document_name or "unknown_document")
         
-        return f"{request_id}_{document_name}_{timestamp}"
+        return f"{request_id}_{document_name}_{unique_id}"
     
     def _sanitize_filename(self, filename: str) -> str:
         """Remove invalid characters from filename"""

@@ -300,15 +300,28 @@ class TextExtractionService:
                         )
                         bronze_urls["figures"] = figure_analysis
                     
-                    # Store processing logs
-                    bronze_urls["processing_logs"] = await self.bronze_storage.store_processing_logs(
-                        processing_data, bronze_paths
-                    )
-                    
                     logger.info("Successfully stored results in bronze structure")
                     
                 except Exception as e:
                     error_msg = f"Error storing to bronze structure: {str(e)}"
+                    logger.warning(error_msg)
+                    processing_data["warnings"].append(error_msg)
+            
+            # Finalize processing data and store logs at the end of successful processing
+            processing_data["end_time"] = time.perf_counter()
+            processing_data["duration"] = processing_data["end_time"] - start_time
+            processing_data["figures_detected"] = len(figures_info)
+            processing_data["figures_analyzed"] = len(figure_descriptions)
+            processing_data["figures_skipped"] = len(figures_info) - len(figure_descriptions) if figures_info else 0
+            
+            # Store processing logs once at the end of successful processing
+            if document and bronze_paths:
+                try:
+                    bronze_urls["processing_logs"] = await self.bronze_storage.store_processing_logs(
+                        processing_data, bronze_paths
+                    )
+                except Exception as e:
+                    error_msg = f"Error storing processing logs: {str(e)}"
                     logger.warning(error_msg)
                     processing_data["warnings"].append(error_msg)
             
