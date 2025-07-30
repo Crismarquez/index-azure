@@ -18,9 +18,11 @@ from services.ocr.adapters import (
 )
 from services.ocr.error_handling import SmartErrorHandler, CircuitBreaker, HealthCheck
 from services.data import AzureBlobStorageAdapter, LocalFileStorageAdapter
+from services.database import DocumentDatabase
+from services.document_manager import DocumentManager
 from services.ocr.base import DocumentOrchestrationService, TextExtractionService, QualityAssuranceService
 
-logger = logging.getLogger(__name__)
+from config.config import ENV_VARIABLES, logger
 
 
 
@@ -34,6 +36,11 @@ class OCRPipeline:
         # Error handling
         self.error_handler = SmartErrorHandler()
         self.circuit_breaker = CircuitBreaker()
+        
+        # Database and document management
+        database_url = env_variables.get('DATABASE_URL', 'sqlite:///./documents.db')
+        self.database = DocumentDatabase(database_url)
+        self.bronze_base_path = env_variables.get('BRONZE_BASE_PATH', 'bronze')
         self.health_check = HealthCheck()
         
         # External service adapters
@@ -87,6 +94,13 @@ class OCRPipeline:
         
         # Conversion Service
         self.conversion_service = LibreOfficeAdapter()
+        
+        # Document Manager (integrates database + storage)
+        self.document_manager = DocumentManager(
+            database=self.database,
+            storage_service=self.storage_service,
+            bronze_base_path=self.bronze_base_path
+        )
     
     def _setup_application_services(self):
         """Setup application layer services"""
@@ -153,70 +167,54 @@ class OCRPipeline:
                     )
                 )
                 
+                # Register document in database
+                document_id = await self.document_manager.register_document(document)
+                logger.info(f"Document registered in database with ID: {document_id}")
+                
+                # Update status to PROCESSING
+                await self.document_manager.update_processing_status(
+                    document_id, ProcessingStatus.PROCESSING
+                )
+                
                 # Process with circuit breaker protection
                 extraction_result = await self.circuit_breaker.call(
                     self.orchestrator.process_document,
                     document
                 )
                 
-                # TODO: add quality assessment
+                # Store complete extraction result (database + files)
+                original_content = await self.storage_service.download_file(attachment.url)
+                storage_urls = await self.document_manager.store_extraction_result(
+                    document, extraction_result, original_content
+                )
                 
-                # Store quality assessment in bronze structure if available
-                bronze_base_folder = extraction_result.metadata.get('bronze_base_folder')
-                if bronze_base_folder:
-                    from services.data import BronzeStorageService
-                    bronze_storage = BronzeStorageService(self.storage_service)
-                    try:
-                        # Use existing bronze paths from the base folder instead of generating new ones
-                        # This ensures we use the same folder structure created during processing
-                        bronze_paths_dict = {
-                            "base_folder": bronze_base_folder,
-                            "raw_folder": f"{bronze_base_folder}/raw",
-                            "extracted_content_folder": f"{bronze_base_folder}/extracted_content",
-                            "content_pages_folder": f"{bronze_base_folder}/content_pages",
-                            "figures_folder": f"{bronze_base_folder}/figures",
-                            "processing_logs_folder": f"{bronze_base_folder}/processing_logs",
-                            "quality_assessment_folder": f"{bronze_base_folder}/quality_assessment",
-                            
-                            # Specific file paths
-                            "original_document": f"{bronze_base_folder}/raw/original_document.pdf",
-                            "full_text": f"{bronze_base_folder}/extracted_content/full_text.md",
-                            "metadata": f"{bronze_base_folder}/extracted_content/metadata.json",
-                            "extraction_result": f"{bronze_base_folder}/extracted_content/extraction_result.json",
-                            "figure_analysis": f"{bronze_base_folder}/figures/figure_analysis.json",
-                            "processing_log": f"{bronze_base_folder}/processing_logs/processing_log.json",
-                            "quality_report": f"{bronze_base_folder}/quality_assessment/quality_report.json"
-                        }
-
-                        # Store extraction result in bronze structure 
-                        bronze_extraction_urls = await bronze_storage.store_extraction_result(extraction_result, bronze_paths_dict)
-                        
-                        # Create final manifest
-                        all_stored_urls = {
-                            **extraction_result.metadata.get('bronze_storage_urls', {}),
-                            **bronze_extraction_urls
-                        }
-                        
-                        manifest_url = await bronze_storage.create_bronze_manifest(document, all_stored_urls, bronze_paths_dict)
-                        extraction_result.metadata['bronze_manifest_url'] = manifest_url
-                        
-                        logger.info(f"Complete bronze structure created for {document.metadata.document_name}")
-                        
-                    except Exception as e:
-                        logger.warning(f"Error completing bronze structure: {str(e)}")
-                        extraction_result.metadata['bronze_error'] = str(e)
+                # Update status to COMPLETED
+                await self.document_manager.update_processing_status(
+                    document_id, ProcessingStatus.COMPLETED
+                )
                 
                 results.append({
                     "document_name": document.metadata.document_name,
+                    "document_id": document_id,
                     "status": "success",
-                    "extraction_result": extraction_result,
-                    #"quality_score": extraction_result.confidence_score
+                    "data_state": document.data_state.value,
+                    "storage_urls": storage_urls,
+                    "extraction_result": extraction_result
                 })
                 
             except Exception as e:
-                logger.error(f"Failed to process {attachment.document_name}: {str(e)}")
+                logger.error(f"Failed to process {attachment.name}: {str(e)}")
+                # Update status to FAILED if document was registered
+                if 'document_id' in locals():
+                    try:
+                        await self.document_manager.update_processing_status(
+                            document_id, ProcessingStatus.FAILED
+                        )
+                    except:
+                        pass  # Don't fail if we can't update status
+                
                 results.append({
-                    "document_name": attachment.document_name,
+                    "document_name": attachment.name,
                     "status": "failed",
                     "error": str(e)
                 })

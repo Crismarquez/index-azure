@@ -19,6 +19,22 @@ class ProcessingStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
+# Nuevos enums para gestión de estados avanzada
+class DataState(Enum):
+    """Estado de los datos en la arquitectura de capas"""
+    BRONZE = "bronze"      # Datos brutos, sin procesar
+    SILVER = "silver"      # Datos limpios y estructurados
+    GOLD = "gold"          # Datos agregados y listos para análisis
+
+class ProcessStage(Enum):
+    """Etapa del proceso de datos"""
+    INGESTION = "ingestion"         # Carga inicial
+    EXTRACTION = "extraction"       # Extracción OCR/IA
+    TRANSFORMATION = "transformation" # Limpieza y transformación
+    ENRICHMENT = "enrichment"       # Enriquecimiento con metadatos
+    VALIDATION = "validation"       # Validación de calidad
+    READY = "ready"                # Listo para consumo
+
 @dataclass
 class DocumentMetadata:
     """Rich metadata for documents - generalized for any use case"""
@@ -40,11 +56,16 @@ class DocumentMetadata:
 
 @dataclass
 class Document:
-    """Core document entity"""
+    """Core document entity with extended state management"""
     url: str
     document_type: DocumentType
     metadata: DocumentMetadata
     status: ProcessingStatus = ProcessingStatus.PENDING
+    # Nuevos campos para gestión de estados
+    data_state: DataState = DataState.BRONZE
+    process_stage: ProcessStage = ProcessStage.INGESTION
+    # Campo para ID único en base de datos
+    document_id: Optional[str] = None
     
     def __post_init__(self):
         # Auto-detect document type from URL if not provided
@@ -53,10 +74,15 @@ class Document:
                 self.document_type = DocumentType(self.document_type.lower())
             except ValueError:
                 raise ValueError(f"Unsupported document type: {self.document_type}")
+        
+        # Generar ID único si no se proporciona
+        if not self.document_id:
+            timestamp = int(datetime.now().timestamp())
+            self.document_id = f"{self.metadata.request_id}_{self.metadata.attachment_id}_{timestamp}"
 
 @dataclass
 class ExtractionResult:
-    """Result of OCR processing"""
+    """Result of OCR processing with enhanced metadata"""
     document_id: str
     content: str
     pages: List[Dict[str, Any]] = None
@@ -65,12 +91,19 @@ class ExtractionResult:
     processing_time: Optional[float] = None
     metadata: Dict[str, Any] = None
     errors: List[str] = None
+    # Nuevos campos para gestión de resultados
+    quality_score: Optional[float] = None
+    figures_detected: Optional[int] = None
+    ai_vision_enabled: bool = True
+    storage_paths: Optional[Dict[str, str]] = None
     
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
         if self.errors is None:
             self.errors = []
+        if self.storage_paths is None:
+            self.storage_paths = {}
 
 @dataclass
 class ProcessingContext:

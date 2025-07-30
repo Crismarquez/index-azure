@@ -176,4 +176,5 @@ cython_debug/
 chroma_db/
 data/evaluations
 storage/
+documents.db
 

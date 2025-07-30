@@ -16,8 +16,10 @@ LOGS_DIR = Path(BASE_DIR, "logs")
 SQLAGENT_DIR = Path(BASE_DIR, "agents","sqlagent")
 
 DATA_DIR = Path(BASE_DIR, "data")
+DATABASE_DIR = Path(BASE_DIR, "database")
 
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+DATABASE_DIR.mkdir(parents=True, exist_ok=True)
 
 ENV_VARIABLES = {
     **dotenv_values(BASE_DIR / ".env"),  # load environment variables from .env file

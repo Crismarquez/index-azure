@@ -37,4 +37,8 @@ python-multipart==0.0.6  # For file uploads in FastAPI
 httpx==0.25.2  # For testing HTTP requests
 
 # File system operations
-pathlib  # Built-in Python, but ensuring compatibility 
+pathlib  # Built-in Python, but ensuring compatibility
+
+# Database ORM
+sqlalchemy==2.0.23
+alembic==1.13.1  # For database migrations 
